@@ -2,29 +2,32 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 class Remark {
+    [string]$kind
     [string]$file
     [int]$line
     [float]$points
     [string]$comment
 
     Remark(
+        [string]$kind,
         [string]$file,
         [int]$line,
         [float]$points,
         [string]$comment
     ) {
+        $this.kind = $kind
         $this.file = $file
         $this.line = $line
         $this.points = $points
         $this.comment = $comment
     }
 
-    [string]FormatHtmlTable() {
-        return "<tr><td><a href=`"#remark-l$($_.line)`">$(($_.file -split "/")[2]):$($_.line)</a> <td> $($_.points)b <td> $($_.comment)"
+    [string]FormatAsHtml() {
+        return "<tr><td><a href=`"#remark-l$($_.line)`">$($_.file):$($_.line)</a> <td class=`"remark-points`"> $($_.points)b <td> $($_.comment)"
     }
 
-    [string]FormatPlain() {
-        return "$(($_.file -split "/")[2]):$($_.line)`t$($_.points)b`t$($_.comment)"
+    [string]FormatAsPlainText() {
+        return "$($_.file):$($_.line)`t$($_.points)b`t$($_.comment)"
     }
 }
 
@@ -36,35 +39,44 @@ class Remarks {
     }
     
     Add(
+        [string]$kind,
         [string]$file,
         [int]$line,
         [float]$points,
         [string]$comment
     ) {
-        $this.items += [Remark]::new($file, $line, $points, $comment)
+        $this.items += [Remark]::new($kind, $file, $line, $points, $comment)
     }
 
-    [float]DeducedPoints() {
-        return $(-($this.items | Measure-Object -Property points -Sum).Sum)
+    [float] TotalPoints() {
+        return - ($this.items | Measure-Object -Property points -Sum).Sum
+    }
+
+    [string] FormatAsPlainText() {
+        return $this.items | % { $_.FormatAsPlainText() } | Join-String -Separator "`n"
+    }
+
+    [string] FormatAsHtmlTable() {
+        return @(
+            "<table class=`"remark-list`">"
+            ($this.items | % { $_.FormatAsHtml() } | Join-String -Separator "`n")
+            "</table>"
+        ) -join "`n"
     }
 }
 
-function ProcessCode([String]$code, [string]$filename) {
+function New-CodeReview([string]$file) {
     $css = chroma --style=colorful --html-styles
 
-    if (!$code.StartsWith("/*$")) {
-        throw "This is not a valid input file:`n$code"
-    }
-    $code = $code.Substring(4)
-    $summary, $code = $code -split "\$\*/", 2
     $remarks = [Remarks]::new()
-    $body = Process-SourceFile $code $filename ($remarks)
-
+    $summary, $body = New-FileReview $file $remarks
+    
     Write-Host $summary
     Write-Host "Soucasti hodnoceni je PDF s komentari. Souhrn komentaru:"
-    $remarks.items | % { Write-Host $_.FormatPlain() }
+    Write-Host $remarks.FormatAsPlainText()
     Write-Host "======================="
-    Write-Host "Total points deducted: $(-($remarks.DeducedPoints().toString("#.##")))"
+    Write-Host "Total points deducted: $(-($remarks.TotalPoints().toString("#.##")))"
+    
     @"
 <!html>
 <head>
@@ -78,14 +90,33 @@ function ProcessCode([String]$code, [string]$filename) {
 
         main {
             padding: 0 20px;
-            max-width: 750px;
+            max-width: 1000px;
+        }
+
+        table {
+            margin: 0 auto;
+            border: 1px solid grey;
+            border-collapse: collapse;
+        }
+        
+        th,td {
+            padding: .5em;
+            border: 1px solid lightgrey;
+        }
+
+        .review {
+            display: grid;
+            grid-template-columns: 70% 30%;
+            align-items: end;
+        
         }
 
         .remark {
-            margin: 10px 20px;
-            padding: 10px;
+            margin: 10px 0 0 10px;
+            padding: 5px 10px;
             font-size: 0.9rem;
             border: solid 2px gray;
+            background: white;
         }
 
         .remark-title {
@@ -97,20 +128,28 @@ function ProcessCode([String]$code, [string]$filename) {
             color: gray;
         }
 
-        .remark--red {
+        .remark--negative {
             border-color: red;
         }
 
-        .remark--red .remark-title {
+        .remark--negative .remark-title {
             color: red;
         }
 
-        .remark--green {
+        .remark--positive {
             border-color: green;
         }
 
-        .remark--green .remark-title {
+        .remark--positive .remark-title {
             color: green;
+        }
+
+        .remark-points {
+            text-align: right;
+        }
+
+        .chroma {
+            margin: 0;
         }
 
         ${css}
@@ -120,52 +159,69 @@ function ProcessCode([String]$code, [string]$filename) {
     <main>
         <h1>Code Review Result Details</h1>
         <div class="summary">$summary </div>
-        <div class="total">Total points deducted: $(-($remarks.DeducedPoints().tostring("#.##")))</div>
+        <div class="total">Total points deducted: $(-($remarks.TotalPoints().tostring("#.##")))</div>
         <h2>List of Remarks</h2>
-        <table class="remark-list">
-    $($remarks.items | % {
-        "<tr><td><a href=`"#remark-l$($_.line)`">$(($_.file -split "/")[2]):$($_.line)</a> <td> $($_.points)b <td> $($_.comment)"
-    })
-    </table>
-    <h2>$filename</h2>
-    $body
+        $($remarks.FormatAsHtmlTable())
+        <h2>$file</h2>
+        <div class="review">
+            $body
+        </div>
     </main>
     </body>
     </html>
 "@
 }
 
-function Process-SourceFile([string]$content, [string]$filename, [Remarks]$remarks) {
+function New-FileReview([string] $file, [Remarks] $remarks) {
+    $code = Get-Content -Raw $file
+    
+    if (!$code.StartsWith("/*$")) {
+        throw @(
+            "This is not a valid input file."
+            "Summary comment /*$ ... $*/ at the begining of a file is required."
+            "Received code:"
+            $code
+        ) -join "`n"
+    }
+
+    $code = $code.Substring(4)
+    $summary, $code = $code -split "\$\*/", 2
+    $body = New-FileReviewBody "$code`n//" $file $remarks
+
+    Write-Host $body.GetType()
+
+    return $summary, $body[0..($body.count - 3)] # Hide last lightlited line, which was artificially added.
+}
+
+function New-FileReviewBody([string]$content, [string]$filename, [Remarks]$remarks) {
     [int]$lastLineNum = 0
-    ($code -split "(//\$.*)`n?") | % {
+    ($content -split "(//\$.*)`n?") | % {
         if ($_.StartsWith("//$")) {
             if ($_ -match "//\$-\s*(?<Severnity>\d+.?\d*)\s*(?<Comment>.+)") {
-                Format-Remark "red" $Matches["Comment"] ($lastLineNum - 1)
-                $remarks.Add($filename, ($lastLineNum - 1), - [float]$Matches["Severnity"], $Matches["Comment"])
+                $remarks.Add("negative", $filename, ($lastLineNum - 1), - [float]$Matches["Severnity"], $Matches["Comment"])
             }
             elseif ($_ -match "//\$\+\s*(?<Comment>.+)") {
-                Format-Remark "green" $Matches["Comment"] ($lastLineNum - 1)
-                $remarks.Add($filename, ($lastLineNum - 1), 0.0, $Matches["Comment"])
+                $remarks.Add("positive", $filename, ($lastLineNum - 1), 0.0, $Matches["Comment"])
             }
             elseif ($_ -match "//\$\s*(?<Comment>.+)") {
-                Format-Remark "neutral" $Matches["Comment"] ($lastLineNum - 1)
-                $remarks.Add($filename, ($lastLineNum - 1), 0.0, $Matches["Comment"])
+                $remarks.Add("neutral", $filename, ($lastLineNum - 1), 0.0, $Matches["Comment"])
             }
             else {
                 throw "MalformedComment"
             }
+            Format-Remark $remarks.items[-1]
         }
-        else { 
+        else {
             Format-CodeSegment $_ ([ref]$lastLineNum)
         }
     }
 }
 
-function Format-Remark([string]$kind, [string]$text, [int]$line) {
+function Format-Remark([Remark] $remark) {
     @"
-    <div class="remark remark--$kind" id="remark-l$line">
-    <h3 class="remark-title">Remark</h3>
-    $text
+    <div class="remark remark--$($remark.kind)" id="remark-l$($remark.line)">
+    <h3 class="remark-title">! $(if ($remark.points -ne 0.0) { $remark.points })</h3>
+    $($remark.comment)
     </div>
 "@
 }
@@ -179,4 +235,4 @@ function Format-CodeSegment([string]$segment, [ref][int]$lastLineNum) {
 }
 
 
-Export-ModuleMember ProcessCode
+Export-ModuleMember New-CodeReview
