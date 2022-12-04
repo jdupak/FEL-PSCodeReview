@@ -75,8 +75,7 @@ function New-CodeReview([string]$file) {
     Write-Host "Soucasti hodnoceni je PDF s komentari. Souhrn komentaru:"
     Write-Host $remarks.FormatAsPlainText()
     Write-Host "======================="
-    Write-Host "Total points deducted: $(-($remarks.TotalPoints().toString("#.##")))"
-    
+    Write-Host "Total points deducted: $(-($remarks.TotalPoints().toString("#.##")))"    
     @"
 <!html>
 <head>
@@ -98,7 +97,7 @@ function New-CodeReview([string]$file) {
             border: 1px solid grey;
             border-collapse: collapse;
         }
-        
+
         th,td {
             padding: .5em;
             border: 1px solid lightgrey;
@@ -176,19 +175,12 @@ function New-FileReview([string] $file, [Remarks] $remarks) {
     $code = Get-Content -Raw $file
     
     if (!$code.StartsWith("/*$")) {
-        throw @(
-            "This is not a valid input file."
-            "Summary comment /*$ ... $*/ at the begining of a file is required."
-            "Received code:"
-            $code
-        ) -join "`n"
+        throw "This is not a valid input file. Summary comment /*$ ... $*/ at the begining of a file is required."
     }
 
     $code = $code.Substring(4)
     $summary, $code = $code -split "\$\*/", 2
     $body = New-FileReviewBody "$code`n//" $file $remarks
-
-    Write-Host $body.GetType()
 
     return $summary, $body[0..($body.count - 3)] # Hide last lightlited line, which was artificially added.
 }
@@ -233,6 +225,3 @@ function Format-CodeSegment([string]$segment, [ref][int]$lastLineNum) {
     Write-Output $segment | chroma --lexer=c --html --html-only --html-lines --html-base-line=$lineNum --html-highlight=$lastLineInSegment
     $lastLineNum.Value += $linesInSegment
 }
-
-
-Export-ModuleMember New-CodeReview
