@@ -1,227 +1,245 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-class Remark {
-    [string]$kind
-    [string]$file
-    [int]$line
-    [float]$points
-    [string]$comment
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-    Remark(
-        [string]$kind,
-        [string]$file,
-        [int]$line,
-        [float]$points,
-        [string]$comment
+class CodeFragment {
+    [int] $StartLine
+    [string] $Code
+
+    CodeFragment(
+        [int] $StartLine,
+        [string] $Code
     ) {
-        $this.kind = $kind
-        $this.file = $file
-        $this.line = $line
-        $this.points = $points
-        $this.comment = $comment
+        $this.StartLine = $StartLine
+        $this.Code = $Code
     }
 
-    [string]FormatAsHtml() {
+    [int] GetLineCount() {
+        return $this.Code.Split("`n").Count
+    }
+
+    [string] FormatAsHtml([Nullable[int]] $HighlightedLine) {
+        return $this.Code | chroma --lexer=c --html --html-only --html-lines --html-base-line=$($this.StartLine) --html-highlight=$($HighlightedLine)
+    }
+}
+
+class Remark {
+    [string] hidden $Kind
+    [string] $File
+    [int] $Line
+    [float] $Points
+    [string] $Comment
+    [CodeFragment] hidden $Code # Code preceeding this remarks (from last remark)
+
+    Remark(
+        [string] $Kind,
+        [string] $File,
+        [int] $Line,
+        [float] $Points,
+        [string] $Comment,
+        [CodeFragment] $Code
+    ) {
+        $this.Kind = $Kind
+        $this.File = $File
+        $this.Line = $Line
+        $this.Points = $Points
+        $this.Comment = $Comment
+        $this.Code = $Code
+    }
+
+    [string] FormatAsHtml() {
         return "<tr><td><a href=`"#remark-l$($_.line)`">$($_.file):$($_.line)</a> <td class=`"remark-points`"> $($_.points)b <td> $($_.comment)"
     }
 
-    [string]FormatAsPlainText() {
+    [string] FormatAsText() {
         return "$($_.file):$($_.line)`t$($_.points)b`t$($_.comment)"
+    }
+
+    [string] FormatCommentAsHtml() {
+        return @"
+        <div class="remark remark--$($this.Kind)" id="remark-l$($this.Line)">
+        <h3 class="remark-title">! $(if ($this.Points -ne 0.0) { $this.Points })</h3>
+        $($this.Comment)
+        </div>
+"@
+    }
+
+    [string] FormatAsCodeFragment() {
+        return $this.Code.FormatAsHtml($this.Line) + $this.FormatCommentAsHtml()
     }
 }
 
-class Remarks {
-    [Remark[]]$items
+class FileReview {
+    [string] $FileName
+    [string] $Summary
+    [Remark[]] $Remarks
+    [CodeFragment] hidden $LastCode
 
-    Remarks() {
-        $this.items = @()
+    FileReview([string] $FileName, [string] $Summary) {
+        $this.FileName = $FileName
+        $this.Summary = $Summary
+        $this.Remarks = @()
     }
     
     Add(
-        [string]$kind,
-        [string]$file,
-        [int]$line,
-        [float]$points,
-        [string]$comment
+        [string] $Kind,
+        [string] $File,
+        [int] $Line,
+        [float] $Points,
+        [string] $Comment,
+        [CodeFragment] $Code
     ) {
-        $this.items += [Remark]::new($kind, $file, $line, $points, $comment)
+        $this.Remarks += [Remark]::new($Kind, $File, $Line, $Points, $Comment, $Code)
     }
 
     [float] TotalPoints() {
-        return - ($this.items | Measure-Object -Property points -Sum).Sum
+        return ($this.Remarks | Measure-Object -Property points -Sum).Sum
     }
 
-    [string] FormatAsPlainText() {
-        return $this.items | % { $_.FormatAsPlainText() } | Join-String -Separator "`n"
+    [string] FormatTotalPoints() {
+        return "$($this.TotalPoints().ToString("0.##"))b"
     }
 
-    [string] FormatAsHtmlTable() {
+    [string] FormatListAsMarkdown() {
+        return $this.Remarks | % { "- $($_.FormatAsText())" } | Join-String -Separator "`n"
+    }
+
+    [string] FormatListAsHtml() {
         return @(
             "<table class=`"remark-list`">"
-            ($this.items | % { $_.FormatAsHtml() } | Join-String -Separator "`n")
+            ($this.Remarks | % { $_.FormatAsHtml() } | Join-String -Separator "`n")
             "</table>"
         ) -join "`n"
     }
+
+    [string] FormatAsHtml() {
+        $out = "<h2>File: $($this.FileName)</h2>"
+        $out += "<div class=`"review`">"
+        foreach ($Remark in $this.Remarks) {
+            $out += $Remark.FormatAsCodeFragment()
+            $out += "`n"
+        }
+        $out += $this.LastCode.FormatAsHtml($null)
+        $out += "</div>"
+        return $out
+    }
+
+    [string] FormatEvalSummary() {
+        return @"
+*NOTE: Soucasti hodnoceni je PDF s detaily.*
+
+**Summary:**
+$($this.Summary)
+
+$($this.FormatListAsMarkdown())
+        
+"@
+    }
 }
 
-function New-CodeReview([string]$file) {
-    $css = chroma --style=colorful --html-styles
-
-    $remarks = [Remarks]::new()
-    $summary, $body = New-FileReview $file $remarks
+function New-CodeReview([string]$FileName) {
+    $Review = New-FileReview $FileName
     
-    Write-Host $summary
-    Write-Host "Soucasti hodnoceni je PDF s komentari. Souhrn komentaru:"
-    Write-Host $remarks.FormatAsPlainText()
-    Write-Host "======================="
-    Write-Host "Total points deducted: $(-($remarks.TotalPoints().toString("#.##")))"    
-    @"
+    $Eval = $Review.FormatEvalSummary()
+        
+    $Html = @"
 <!html>
 <head>
     <style>
-        body {
-            margin: 0;
-            padding: 0;
-            font-family: sans-serif;
-            background: white;
-        }
-
-        main {
-            padding: 0 20px;
-            max-width: 1000px;
-        }
-
-        table {
-            margin: 0 auto;
-            border: 1px solid grey;
-            border-collapse: collapse;
-        }
-
-        th,td {
-            padding: .5em;
-            border: 1px solid lightgrey;
-        }
-
-        .review {
-            display: grid;
-            grid-template-columns: 70% 30%;
-            align-items: end;
-        
-        }
-
-        .remark {
-            margin: 10px 0 0 10px;
-            padding: 5px 10px;
-            font-size: 0.9rem;
-            border: solid 2px gray;
-            background: white;
-        }
-
-        .remark-title {
-            display: inline;
-            margin: 0;
-            padding: 0 0 5px 0;
-            font-wight: bold;
-            font-size: 90%;
-            color: gray;
-        }
-
-        .remark--negative {
-            border-color: red;
-        }
-
-        .remark--negative .remark-title {
-            color: red;
-        }
-
-        .remark--positive {
-            border-color: green;
-        }
-
-        .remark--positive .remark-title {
-            color: green;
-        }
-
-        .remark-points {
-            text-align: right;
-        }
-
-        .chroma {
-            margin: 0;
-        }
-
-        ${css}
+        $(Get-Content -Raw (Join-Path -Path $ScriptDir -ChildPath "./CodeReview.css"))
+        $(chroma --style=colorful --html-styles)
     </style>
 </head>
 <body>
     <main>
         <h1>Code Review Result Details</h1>
-        <div class="summary">$summary </div>
-        <div class="total">Total points deducted: $(-($remarks.TotalPoints().tostring("#.##")))</div>
+        <div class="summary">$($Review.Summary)</div>
+        <h2>Total manual score</h2> <b>$($Review.FormatTotalPoints())</b>
         <h2>List of Remarks</h2>
-        $($remarks.FormatAsHtmlTable())
-        <h2>$file</h2>
-        <div class="review">
-            $body
-        </div>
+        $($Review.FormatListAsHtml())
+        $($Review.FormatAsHtml())
     </main>
     </body>
     </html>
 "@
+    return $Review, $Eval, $Html
 }
 
-function New-FileReview([string] $file, [Remarks] $remarks) {
-    $code = Get-Content -Raw $file
+function Get-FileSections([string] $FileName) {
+    $Code = Get-Content -Raw $FileName
     
-    if (!$code.StartsWith("/*$")) {
+    if (!$Code.StartsWith("/*$")) {
         throw "This is not a valid input file. Summary comment /*$ ... $*/ at the begining of a file is required."
     }
 
-    $code = $code.Substring(4)
-    $summary, $code = $code -split "\$\*/", 2
-    $body = New-FileReviewBody "$code`n//" $file $remarks
+    $Code = $Code.Substring(4)
+    $Summary, $Code = $Code -split "\$\*/", 2
 
-    return $summary, $body[0..($body.count - 3)] # Hide last lightlited line, which was artificially added.
+    return $Summary, $Code
 }
 
-function New-FileReviewBody([string]$content, [string]$filename, [Remarks]$remarks) {
-    [int]$lastLineNum = 0
-    ($content -split "(//\$.*)`n?") | % {
+function New-FileReview([string] $FileName) {
+    $Summary, $Code = Get-FileSections $FileName
+
+    $Review = [FileReview]::new($FileName, $Summary)
+
+    $LastCode = [CodeFragment]::new(0, "")
+    $LastLineNum = 0
+
+    foreach ($_ in ($Code -split "(//\$.*)`n?")) {
         if ($_.StartsWith("//$")) {
-            if ($_ -match "//\$-\s*(?<Severnity>\d+.?\d*)\s*(?<Comment>.+)") {
-                $remarks.Add("negative", $filename, ($lastLineNum - 1), - [float]$Matches["Severnity"], $Matches["Comment"])
+            if ($_ -match "//\$-\s*(?<Severnity>\d*\.?\d*)\s*(?<Comment>.+)") {
+                $Review.Add("negative", $FileName, $LastLineNum, - [float]$Matches["Severnity"], $Matches["Comment"], $LastCode)
             }
-            elseif ($_ -match "//\$\+\s*(?<Comment>.+)") {
-                $remarks.Add("positive", $filename, ($lastLineNum - 1), 0.0, $Matches["Comment"])
+            elseif ($_ -match "//\$\+\s*(?<Severnity>\d*\.?\d*)\s*(?<Comment>.+)") {
+                $Review.Add("positive", $FileName, $LastLineNum, + [float]$Matches["Severnity"], $Matches["Comment"], $LastCode)
             }
             elseif ($_ -match "//\$\s*(?<Comment>.+)") {
-                $remarks.Add("neutral", $filename, ($lastLineNum - 1), 0.0, $Matches["Comment"])
+                $Review.Add("neutral", $FileName, $LastLineNum, 0.0, $Matches["Comment"], $LastCode)
             }
             else {
-                throw "MalformedComment"
+                throw "Comment at line $($LastLineNum) does not match any known format ($($_))."
             }
-            Format-Remark $remarks.items[-1]
         }
         else {
-            Format-CodeSegment $_ ([ref]$lastLineNum)
+            $LastCode = [CodeFragment]::new($LastLineNum + 1, $_)
+            $lastLineNum += $LastCode.GetLineCount()
         }
     }
+
+    $Review.LastCode = $LastCode
+
+    return $Review
 }
 
-function Format-Remark([Remark] $remark) {
+function Initialize-CodeReview([string]$file = "main.c") {
+    $(
+    "/*$"
+    "$*/"
+    (Get-Content $file -Raw)
+) | Set-Content $file
+
     @"
-    <div class="remark remark--$($remark.kind)" id="remark-l$($remark.line)">
-    <h3 class="remark-title">! $(if ($remark.points -ne 0.0) { $remark.points })</h3>
-    $($remark.comment)
-    </div>
-"@
+    cmake_minimum_required(VERSION 3.23)
+    project(codereview C)
+
+    set(CMAKE_C_STANDARD 11)
+
+    add_executable(main $($file))
+"@ | Set-Content CMakeLists.txt
 }
 
-function Format-CodeSegment([string]$segment, [ref][int]$lastLineNum) {
-    [int]$lineNum = $lastLineNum.Value
-    $linesInSegment = $segment.Split("`n").Count
-    $lastLineInSegment = $lineNum + $linesInSegment - 1
-    Write-Output $segment | chroma --lexer=c --html --html-only --html-lines --html-base-line=$lineNum --html-highlight=$lastLineInSegment
-    $lastLineNum.Value += $linesInSegment
+function Build-CodeReview([string]$file = "main.c") {
+    $Review, $Eval, $Html = New-CodeReview $file
+    
+    $Review.Remarks
+    [PSCustomObject]@{
+        Total = $Review.FormatTotalPoints()
+    } | Format-List
+
+    Write-Output $Html > output.html
+    microsoft-edge-dev --headless --disable-gpu --print-to-pdf --print-to-pdf-no-header ./output.html 2>/dev/null
+    Write-Output $Eval > eval.txt
+    Write-Output $Review.FormatTotalPoints()  > "manual-score.txt"
 }
