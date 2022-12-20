@@ -255,3 +255,12 @@ function Publish-BruteCodeReview() {
         Write-Error "PDF not uploaded!"
     }
 }
+
+function Start-BruteCodeReview(
+    [Parameter(Mandatory)][ValidateSet([_StudentName])][string]$UserName
+) {
+    Initialize-BruteEvaluation (Split-Path -Path (Get-Location) -Leaf) $UserName ..
+    Set-Location $UserName
+    Initialize-CodeReview
+    clion .
+}
