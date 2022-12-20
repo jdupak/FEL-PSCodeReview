@@ -243,3 +243,15 @@ function Build-CodeReview([string]$file = "main.c") {
     Write-Output $Eval > eval.txt
     Write-Output $Review.FormatTotalPoints()  > "manual-score.txt"
 }
+
+function Publish-BruteCodeReview() {
+    Build-CodeReview
+    Write-Host "Upload to BRUTE?"
+    pause
+    Publish-BruteEvaluationFromFiles
+    if ((Get-Content -Raw .BRUTE-URL.txt) -match "https://cw.felk.cvut.cz/brute/teacher/upload/(?<Upload>\d+)/(?<Team>\d+)") {
+        Invoke-BruteResultFileUpload "./output.pdf" $Matches["Upload"] $Matches["Team"]
+    } else {
+        Write-Error "PDF not uploaded!"
+    }
+}
