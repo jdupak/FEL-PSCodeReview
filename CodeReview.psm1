@@ -139,6 +139,10 @@ $($this.FormatListAsMarkdown())
 }
 
 function New-CodeReview([string]$FileName) {
+    if ($null -eq (Get-Command "chroma" -ErrorAction SilentlyContinue)) { 
+        throw "Chroma dependency is not available."
+    }
+
     $Review = New-FileReview $FileName
     
     $Eval = $Review.FormatEvalSummary()
@@ -219,15 +223,6 @@ function Initialize-CodeReview([string]$file = "main.c") {
     "$*/"
     (Get-Content $file -Raw)
 ) | Set-Content $file
-
-    @"
-    cmake_minimum_required(VERSION 3.23)
-    project(codereview C)
-
-    set(CMAKE_C_STANDARD 11)
-
-    add_executable(main $($file))
-"@ | Set-Content CMakeLists.txt
 }
 
 function Build-CodeReview([string]$file = "main.c") {
@@ -241,26 +236,5 @@ function Build-CodeReview([string]$file = "main.c") {
     Write-Output $Html > output.html
     microsoft-edge-dev --headless --disable-gpu --print-to-pdf --print-to-pdf-no-header ./output.html 2>/dev/null
     Write-Output $Eval > eval.txt
-    Write-Output $Review.FormatTotalPoints()  > "manual-score.txt"
-}
-
-function Publish-BruteCodeReview() {
-    Build-CodeReview
-    Write-Host "Upload to BRUTE?"
-    pause
-    Publish-BruteEvaluationFromFiles
-    if ((Get-Content -Raw .BRUTE-URL.txt) -match "https://cw.felk.cvut.cz/brute/teacher/upload/(?<Upload>\d+)/(?<Team>\d+)") {
-        Invoke-BruteResultFileUpload "./output.pdf" $Matches["Upload"] $Matches["Team"]
-    } else {
-        Write-Error "PDF not uploaded!"
-    }
-}
-
-function Start-BruteCodeReview(
-    [Parameter(Mandatory)][ValidateSet([_StudentName])][string]$UserName
-) {
-    Initialize-BruteEvaluation (Split-Path -Path (Get-Location) -Leaf) $UserName ..
-    Set-Location $UserName
-    Initialize-CodeReview
-    clion .
+    Write-Output $Review.TotalPoints().ToString("0.##")  > "manual-score.txt"
 }
