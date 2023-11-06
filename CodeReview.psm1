@@ -234,7 +234,6 @@ function Build-CodeReview([string]$file = "main.c") {
     } | Format-List
 
     Write-Output $Html > output.html
-    chromium --headless=new --disable-gpu --print-to-pdf --no-pdf-header-footer ./output.html 2>/dev/null
     Write-Output $Eval > eval.txt
     Write-Output $Review.TotalPoints().ToString("0.##")  > "manual-score.txt"
 }
