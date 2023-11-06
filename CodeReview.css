@@ -1,7 +1,7 @@
 body {
     margin: 0;
     padding: 0;
-    font-family: sans-serif;
+    font-family: "jetbrains mono", sans-serif;
     background: white;
 }
 
@@ -10,16 +10,60 @@ main {
     max-width: 1000px;
 }
 
-table {
-    margin: 0 auto;
-    border: 1px solid grey;
-    border-collapse: collapse;
+h1 {
+    font-size: 24px;
+    color: #333; /* darken the text color */
+    margin-bottom: 20px;
 }
 
-th,td {
-    padding: .5em;
-    border: 1px solid lightgrey;
+h2 {
+    font-size: 20px;
+    color: #333; /* darken the text color */
+    margin-top: 20px;
+    page-break-after: avoid;
 }
+
+.summary {
+    padding: 0 0 30px 0;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px 0; /* add margin for better separation */
+}
+
+th, td {
+    padding: 12px; /* increase padding for better readability */
+    border: 1px solid #ccc;
+    text-align: left;
+}
+
+th {
+    background-color: #0074e4; /* use university-style blue for table header background */
+    color: #fff; /* white text color for table headers */
+}
+
+tr:nth-child(even) {
+    background-color: #f2f2f2; /* alternate row background color for better readability */
+}
+
+/* hover effect on table rows */
+tr:hover {
+    background-color: #ddd; /* light gray on hover */
+}
+
+/* add a border radius to table headers */
+th:first-child {
+    border-top-left-radius: 5px;
+    border-bottom-left-radius: 5px;
+}
+
+th:last-child {
+    border-top-right-radius: 5px;
+    border-bottom-right-radius: 5px;
+}
+
 
 .review {
     display: grid;
@@ -67,4 +111,5 @@ th,td {
 
 .chroma {
     margin: 0;
+    font-size: 0.9rem;
 }
